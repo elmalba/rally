@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Rally Auto360 3D — VW Gol #88</title>
+<style>
+  :root{ --cyan:#4FC3E8; --navy:#16233F; --ui:#EAF6FB; --accent:#FFD23F; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#0B1526;font-family:"Segoe UI",system-ui,sans-serif;
+    -webkit-user-select:none;user-select:none;touch-action:none}
+  canvas{display:block}
+  .hud{position:fixed;color:var(--ui);text-shadow:0 2px 4px rgba(0,0,0,.6);pointer-events:none;z-index:5}
+  #topbar{top:10px;left:50%;transform:translateX(-50%);display:flex;gap:20px;align-items:center;
+    background:rgba(22,35,63,.75);border:1px solid rgba(79,195,232,.5);border-radius:12px;padding:8px 16px}
+  #topbar .lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;opacity:.7}
+  #topbar .val{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;min-width:84px;text-align:center}
+  #speedo{bottom:16px;right:16px;text-align:right}
+  #speedo .kmh{font-size:52px;font-weight:800;line-height:1;color:var(--cyan)}
+  #speedo .unit{font-size:13px;letter-spacing:.2em;opacity:.8}
+  #gearbar{width:150px;height:6px;background:rgba(255,255,255,.15);border-radius:3px;margin-top:6px;overflow:hidden}
+  #gearfill{height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--accent));border-radius:3px}
+  #msg{top:20%;left:50%;transform:translateX(-50%);font-size:34px;font-weight:800;letter-spacing:.05em;
+    color:var(--accent);opacity:0;transition:opacity .3s;white-space:nowrap}
+  #help{bottom:14px;left:16px;font-size:12px;opacity:.75;line-height:1.6}
+  #overlay{position:fixed;inset:0;background:rgba(10,16,30,.88);display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;color:var(--ui);text-align:center;padding:20px;z-index:20}
+  #overlay h1{font-size:clamp(30px,6vw,54px);font-weight:900}
+  #overlay h1 .a{color:var(--cyan)}
+  #overlay .car88{font-size:14px;letter-spacing:.3em;text-transform:uppercase;color:var(--accent)}
+  #overlay p{max-width:440px;font-size:14px;opacity:.85;line-height:1.6}
+  #startBtn{pointer-events:auto;cursor:pointer;margin-top:8px;font-size:18px;font-weight:700;
+    padding:14px 42px;border:none;border-radius:10px;color:#0B1526;
+    background:linear-gradient(180deg,var(--cyan),#2E9CC4);box-shadow:0 6px 0 #1D6E8C}
+  #startBtn:active{transform:translateY(4px);box-shadow:0 2px 0 #1D6E8C}
+  .touch{position:fixed;bottom:18px;display:none;gap:12px;z-index:15}
+  .touch button{width:64px;height:64px;border-radius:50%;border:2px solid rgba(79,195,232,.6);
+    background:rgba(22,35,63,.55);color:var(--ui);font-size:22px;font-weight:700;
+    -webkit-tap-highlight-color:transparent}
+  .touch button:active{background:rgba(79,195,232,.5)}
+  #touchL{left:18px} #touchR{right:18px}
+  @media (pointer:coarse){ .touch{display:flex} #help{display:none} #speedo{bottom:100px} }
+</style>
+</head>
+<body>
+
+<div id="topbar" class="hud">
+  <div><div class="lbl">Tiempo</div><div class="val" id="tCur">0:00.000</div></div>
+  <div><div class="lbl">Última</div><div class="val" id="tLast">--:--.---</div></div>
+  <div><div class="lbl">Récord</div><div class="val" id="tBest" style="color:var(--accent)">--:--.---</div></div>
+  <div><div class="lbl">Vuelta</div><div class="val" id="lap">1</div></div>
+</div>
+
+<div id="speedo" class="hud">
+  <div class="kmh" id="kmh">0</div>
+  <div class="unit">KM/H</div>
+  <div id="gearbar"><div id="gearfill"></div></div>
+</div>
+
+<div id="msg" class="hud"></div>
+
+<div id="help" class="hud">
+  ▲/W acelerar &nbsp; ▼/S frenar &nbsp; ◀▶/A D dirección<br>
+  ESPACIO freno de mano &nbsp; C cámara &nbsp; R reiniciar
+</div>
+
+<div class="touch" id="touchL">
+  <button id="btnLeft">◀</button><button id="btnRight">▶</button>
+</div>
+<div class="touch" id="touchR">
+  <button id="btnBrake">▼</button><button id="btnHand">HB</button><button id="btnGas">▲</button>
+</div>
+
+<div id="overlay">
+  <div class="car88">VW GOL · #88 · GONZÁLEZ / CAÑETE</div>
+  <h1><span class="a">RALLY AUTO360</span> 3D</h1>
+  <p>Etapa de tierra en 3D con cámara de persecución. Usá el freno de mano para
+     cruzar el auto en las horquillas y marcá el mejor tiempo. Tecla C cambia la cámara.</p>
+  <button id="startBtn">LARGAR 🏁</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+
+/* ============ Escena base ============ */
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9CC4DE);
+scene.fog = new THREE.Fog(0x9CC4DE, 180, 520);
+
+const camera = new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.1, 600);
+
+addEventListener("resize", ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const hemi = new THREE.HemisphereLight(0xdfeeff, 0x51663a, 0.85);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff3d8, 1.1);
+sun.position.set(60, 90, 40);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+sun.shadow.camera.left=-40; sun.shadow.camera.right=40;
+sun.shadow.camera.top=40; sun.shadow.camera.bottom=-40;
+sun.shadow.camera.far=250;
+scene.add(sun);
+scene.add(sun.target);
+
+/* ============ Circuito (Catmull-Rom sobre plano XZ) ============ */
+const CTRL = [
+  [40,40],[110,25],[180,38],[230,70],[245,130],[215,185],
+  [155,198],[110,172],[88,132],[58,158],[26,188],[8,150],[12,95],[26,58]
+];
+function catmull(p0,p1,p2,p3,t){
+  const t2=t*t,t3=t2*t;
+  return [
+    .5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
+    .5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)
+  ];
+}
+const PATH=[];
+{
+  const n=CTRL.length, SEG=16;
+  for(let i=0;i<n;i++){
+    const p0=CTRL[(i-1+n)%n],p1=CTRL[i],p2=CTRL[(i+1)%n],p3=CTRL[(i+2)%n];
+    for(let s=0;s<SEG;s++) PATH.push(catmull(p0,p1,p2,p3,s/SEG));
+  }
+}
+const ROAD_W = 9;
+const CHECKPOINTS=[0,Math.floor(PATH.length*.25),Math.floor(PATH.length*.5),Math.floor(PATH.length*.75)];
+
+function nearestSeg(x,z){
+  let best=1e18,bi=0;
+  for(let i=0;i<PATH.length;i++){
+    const a=PATH[i],b=PATH[(i+1)%PATH.length];
+    const abx=b[0]-a[0],abz=b[1]-a[1];
+    const apx=x-a[0],apz=z-a[1];
+    const len2=abx*abx+abz*abz;
+    let t=len2?(apx*abx+apz*abz)/len2:0;
+    t=Math.max(0,Math.min(1,t));
+    const dx=x-(a[0]+abx*t),dz=z-(a[1]+abz*t);
+    const d=dx*dx+dz*dz;
+    if(d<best){best=d;bi=i;}
+  }
+  return {dist:Math.sqrt(best), idx:bi};
+}
+
+/* --- textura procedural de tierra y pasto --- */
+function noiseTexture(base, specks, count){
+  const c=document.createElement("canvas"); c.width=c.height=256;
+  const g=c.getContext("2d");
+  g.fillStyle=base; g.fillRect(0,0,256,256);
+  for(let i=0;i<count;i++){
+    g.fillStyle=specks[(Math.random()*specks.length)|0];
+    g.fillRect(Math.random()*256,Math.random()*256,2+Math.random()*3,1+Math.random()*3);
+  }
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  return t;
+}
+const dirtTex = noiseTexture("#8A5A33",["rgba(110,70,38,.75)","rgba(150,100,58,.65)","rgba(94,58,30,.6)","rgba(166,116,70,.5)"],1100);
+const grassTex= noiseTexture("#3C5527",["rgba(50,72,32,.7)","rgba(74,102,48,.6)","rgba(44,64,28,.5)"],900);
+grassTex.repeat.set(60,60);
+
+/* --- suelo --- */
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(700,700),
+  new THREE.MeshLambertMaterial({map:grassTex})
+);
+ground.rotation.x=-Math.PI/2;
+ground.position.set(125,0,110);
+ground.receiveShadow=true;
+scene.add(ground);
+
+/* --- cinta de camino (triángulos entre bordes izq/der) --- */
+function buildRibbon(width, y, mat){
+  const pos=[], uv=[], idx=[];
+  const N=PATH.length;
+  for(let i=0;i<=N;i++){
+    const p=PATH[i%N], q=PATH[(i+1)%N];
+    const dx=q[0]-p[0], dz=q[1]-p[1], L=Math.hypot(dx,dz)||1;
+    const nx=-dz/L, nz=dx/L;
+    pos.push(p[0]+nx*width/2, y, p[1]+nz*width/2);
+    pos.push(p[0]-nx*width/2, y, p[1]-nz*width/2);
+    uv.push(0, i*.35, 1, i*.35);
+    if(i<N){
+      const a=i*2;
+      idx.push(a,a+2,a+1, a+1,a+2,a+3);   // orden antihorario visto desde arriba (+Y)
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv,2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  mat.side=THREE.DoubleSide;   // respaldo: nunca invisible por culling
+  const m=new THREE.Mesh(geo, mat);
+  m.receiveShadow=true;
+  return m;
+}
+scene.add(buildRibbon(ROAD_W+2.6, .01, new THREE.MeshLambertMaterial({color:0xB59468})));   // banquina
+scene.add(buildRibbon(ROAD_W,      .02, new THREE.MeshBasicMaterial({map:dirtTex})));        // tierra (color pleno)
+
+/* --- líneas blancas de borde (cintas finas desplazadas a cada lado) --- */
+function buildEdgeLine(offset){
+  const pos=[], idx=[];
+  const N=PATH.length, HALF=.22;
+  for(let i=0;i<=N;i++){
+    const p=PATH[i%N], q=PATH[(i+1)%N];
+    const dx=q[0]-p[0], dz=q[1]-p[1], L=Math.hypot(dx,dz)||1;
+    const nx=-dz/L, nz=dx/L;
+    const cx0=p[0]+nx*offset, cz0=p[1]+nz*offset;
+    pos.push(cx0+nx*HALF, .035, cz0+nz*HALF);
+    pos.push(cx0-nx*HALF, .035, cz0-nz*HALF);
+    if(i<N){ const a=i*2; idx.push(a,a+2,a+1, a+1,a+2,a+3); }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos,3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0xF2EFE6, side:THREE.DoubleSide}));
+}
+scene.add(buildEdgeLine( ROAD_W/2-.15));
+scene.add(buildEdgeLine(-ROAD_W/2+.15));
+
+/* --- estacas rojiblancas a los costados (delineadores de rally) --- */
+{
+  const stakeG=new THREE.CylinderGeometry(.09,.09,1.1,6);
+  const topG=new THREE.CylinderGeometry(.1,.1,.36,6);
+  const whiteM=new THREE.MeshLambertMaterial({color:0xF2EFE6});
+  const redM=new THREE.MeshBasicMaterial({color:0xE23131});
+  for(let i=0;i<PATH.length;i+=6){
+    const p=PATH[i], q=PATH[(i+1)%PATH.length];
+    const dx=q[0]-p[0], dz=q[1]-p[1], L=Math.hypot(dx,dz)||1;
+    const nx=-dz/L, nz=dx/L;
+    for(const s of [-1,1]){
+      const stake=new THREE.Mesh(stakeG, whiteM);
+      const x=p[0]+nx*s*(ROAD_W/2+1.9), z=p[1]+nz*s*(ROAD_W/2+1.9);
+      stake.position.set(x,.55,z);
+      const top=new THREE.Mesh(topG, redM);
+      top.position.set(x,1.15,z);
+      scene.add(stake, top);
+    }
+  }
+}
+
+/* --- chevrones sobre el camino marcando el sentido --- */
+{
+  const chC=document.createElement("canvas"); chC.width=chC.height=64;
+  const g=chC.getContext("2d");
+  g.strokeStyle="rgba(255,255,255,.9)"; g.lineWidth=9; g.lineJoin="round"; g.lineCap="round";
+  g.beginPath(); g.moveTo(14,50); g.lineTo(32,18); g.lineTo(50,50); g.stroke();
+  const chTex=new THREE.CanvasTexture(chC);
+  const chMat=new THREE.MeshBasicMaterial({map:chTex, transparent:true, opacity:.55, depthWrite:false});
+  const chGeo=new THREE.PlaneGeometry(2.4,2.4);
+  for(let i=0;i<PATH.length;i+=9){
+    const p=PATH[i], q=PATH[(i+2)%PATH.length];
+    const ang=Math.atan2(q[1]-p[1], q[0]-p[0]);
+    const ch=new THREE.Mesh(chGeo, chMat);
+    ch.rotation.x=-Math.PI/2;
+    ch.rotation.z=-ang-Math.PI/2;   // la punta del chevron apunta hacia adelante
+    ch.position.set(p[0], .045, p[1]);
+    scene.add(ch);
+  }
+}
+
+/* --- línea de meta --- */
+{
+  const c=document.createElement("canvas"); c.width=128;c.height=32;
+  const g=c.getContext("2d");
+  for(let r=0;r<2;r++)for(let col=0;col<8;col++){
+    g.fillStyle=((r+col)%2===0)?"#fff":"#111";
+    g.fillRect(col*16,r*16,16,16);
+  }
+  const t=new THREE.CanvasTexture(c);
+  const a=PATH[0], b=PATH[1];
+  const ang=Math.atan2(b[1]-a[1], b[0]-a[0]);
+  const meta=new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W,2.4),
+    new THREE.MeshBasicMaterial({map:t}));
+  meta.rotation.x=-Math.PI/2;
+  meta.rotation.z=-ang+Math.PI/2;
+  meta.position.set(a[0], .03, a[1]);
+  scene.add(meta);
+  // arco de meta
+  const postMat=new THREE.MeshLambertMaterial({color:0x16233F});
+  const nx=-Math.sin(ang), nz=Math.cos(ang);
+  for(const s of [-1,1]){
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,5,8), postMat);
+    post.position.set(a[0]+nx*s*(ROAD_W/2+.8), 2.5, a[1]+nz*s*(ROAD_W/2+.8));
+    scene.add(post);
+  }
+  const bannerC=document.createElement("canvas"); bannerC.width=512;bannerC.height=64;
+  const bg2=bannerC.getContext("2d");
+  bg2.fillStyle="#16233F"; bg2.fillRect(0,0,512,64);
+  bg2.fillStyle="#4FC3E8"; bg2.font="bold 40px sans-serif";
+  bg2.textAlign="center"; bg2.textBaseline="middle";
+  bg2.fillText("Auto360.cl", 256, 34);
+  const banner=new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W+1.6,1.4),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(bannerC), side:THREE.DoubleSide}));
+  banner.position.set(a[0], 4.4, a[1]);
+  banner.rotation.y=-ang+Math.PI/2;
+  scene.add(banner);
+}
+
+/* --- árboles --- */
+{
+  const trunkG=new THREE.CylinderGeometry(.25,.35,2,6);
+  const leafG=new THREE.ConeGeometry(1.7,3.6,7);
+  const trunkM=new THREE.MeshLambertMaterial({color:0x5C4327});
+  const leafMs=[0x3A5626,0x44632C,0x4E7031].map(c=>new THREE.MeshLambertMaterial({color:c}));
+  let placed=0,tries=0;
+  while(placed<170 && tries<3000){
+    tries++;
+    const x=Math.random()*280-15, z=Math.random()*230-10;
+    if(nearestSeg(x,z).dist < ROAD_W/2+5) continue;
+    const g=new THREE.Group();
+    const trunk=new THREE.Mesh(trunkG,trunkM); trunk.position.y=1;
+    const leaf=new THREE.Mesh(leafG, leafMs[(Math.random()*3)|0]);
+    leaf.position.y=3.4;
+    leaf.castShadow=true;
+    g.add(trunk,leaf);
+    const s=.7+Math.random()*.9;
+    g.scale.set(s,s,s);
+    g.position.set(x,0,z);
+    scene.add(g);
+    placed++;
+  }
+}
+
+/* ============ VW Gol #88 con livery real y auspiciadores ============ */
+function liveryCanvas(w,h,painter){
+  const c=document.createElement("canvas"); c.width=w;c.height=h;
+  painter(c.getContext("2d"),w,h);
+  const t=new THREE.CanvasTexture(c);
+  t.anisotropy=8;
+  return t;
+}
+/* --- helpers de logos --- */
+function drawFlagCL(g,x,y,w){ // bandera chilena
+  const h=w*0.62;
+  g.fillStyle="#fff"; g.fillRect(x,y,w,h/2);
+  g.fillStyle="#D52B1E"; g.fillRect(x,y+h/2,w,h/2);
+  g.fillStyle="#0039A6"; g.fillRect(x,y,w*0.34,h/2);
+  g.fillStyle="#fff";
+  g.beginPath(); g.arc(x+w*0.17,y+h*0.25,w*0.06,0,7); g.fill();
+}
+function drawCopec(g,x,y,s){ // sticker COPEC
+  g.fillStyle="#fff";
+  r(g,x,y,s*2.6,s,s*0.18); g.fill();
+  g.fillStyle="#E8380D";
+  g.beginPath(); g.moveTo(x+s*0.18,y+s*0.78); g.lineTo(x+s*0.42,y+s*0.2); g.lineTo(x+s*0.62,y+s*0.78); g.closePath(); g.fill();
+  g.fillStyle="#F7A800";
+  g.beginPath(); g.moveTo(x+s*0.32,y+s*0.78); g.lineTo(x+s*0.42,y+s*0.5); g.lineTo(x+s*0.54,y+s*0.78); g.closePath(); g.fill();
+  g.fillStyle="#003A8C"; g.font="bold "+(s*0.52)+"px sans-serif";
+  g.textAlign="left"; g.textBaseline="middle";
+  g.fillText("COPEC", x+s*0.72, y+s*0.55);
+  function r(g,x,y,w,h,rr){g.beginPath();g.moveTo(x+rr,y);g.arcTo(x+w,y,x+w,y+h,rr);
+    g.arcTo(x+w,y+h,x,y+h,rr);g.arcTo(x,y+h,x,y,rr);g.arcTo(x,y,x+w,y,rr);g.closePath();}
+}
+function drawMobil(g,x,y,s){ // Mobil 1
+  g.fillStyle="#fff"; g.fillRect(x,y,s*3.4,s);
+  g.font="bold "+(s*0.72)+"px sans-serif"; g.textBaseline="middle"; g.textAlign="left";
+  g.fillStyle="#00337F"; g.fillText("M", x+s*0.12, y+s*0.55);
+  g.fillStyle="#D91E2E"; g.fillText("o", x+s*0.68, y+s*0.55);
+  g.fillStyle="#00337F"; g.fillText("bil", x+s*1.12, y+s*0.55);
+  g.fillStyle="#D91E2E"; g.font="bold italic "+(s*0.9)+"px sans-serif";
+  g.fillText("1", x+s*2.5, y+s*0.52);
+}
+function num88(g,x,y,size){ // 88 amarillo con borde rojo
+  g.font="bold "+size+"px sans-serif"; g.textAlign="center"; g.textBaseline="middle";
+  g.lineWidth=size*0.12; g.strokeStyle="#D91E2E"; g.strokeText("88",x,y);
+  g.fillStyle="#FFD23F"; g.fillText("88",x,y);
+}
+
+/* --- lateral 1024x256: adelante celeste → atrás azul, todos los sponsors --- */
+function paintSide(mirror){
+  return liveryCanvas(1024,256,(g,w,h)=>{
+    g.save();
+    if(mirror){g.translate(w,0);g.scale(-1,1);}
+    // base: celeste adelante (izq) → azul marino atrás
+    const grad=g.createLinearGradient(0,0,w,0);
+    grad.addColorStop(0,"#5FD0F2"); grad.addColorStop(.38,"#4FC3E8");
+    grad.addColorStop(.56,"#1E3358"); grad.addColorStop(1,"#141F38");
+    g.fillStyle=grad; g.fillRect(0,0,w,h);
+    // zócalo inferior oscuro
+    g.fillStyle="rgba(10,16,30,.55)"; g.fillRect(0,h*.84,w,h*.16);
+    // pasos de rueda
+    g.fillStyle="#0B1220";
+    g.beginPath(); g.arc(w*.145,h,h*.34,Math.PI,0); g.fill();
+    g.beginPath(); g.arc(w*.80,h,h*.34,Math.PI,0); g.fill();
+    // franjas blancas diagonales en la transición
+    g.strokeStyle="rgba(255,255,255,.95)"; g.lineWidth=11;
+    g.beginPath();g.moveTo(w*.40,-14);g.lineTo(w*.50,h+14);g.stroke();
+    g.lineWidth=6;
+    g.beginPath();g.moveTo(w*.445,-14);g.lineTo(w*.545,h+14);g.stroke();
+    g.beginPath();g.moveTo(w*.375,-14);g.lineTo(w*.475,h+14);g.stroke();
+    // Auto360 grande atrás (blanco) + .cl amarillo
+    g.fillStyle="#fff"; g.font="bold italic 74px sans-serif";
+    g.textAlign="center"; g.textBaseline="middle";
+    g.fillText("Auto360", w*.685, h*.42);
+    g.fillStyle="#FFD23F"; g.font="bold 30px sans-serif";
+    g.fillText(".cl", w*.845, h*.30);
+    // 88 sobre la puerta trasera
+    num88(g, w*.545, h*.30, 64);
+    // firmafast en el guardabarros delantero
+    g.fillStyle="#fff"; g.font="bold 26px sans-serif"; g.textAlign="left";
+    g.fillText("firma", w*.045, h*.36);
+    g.fillStyle="#4FE0C8"; g.fillText("fast", w*.115, h*.36);
+    // COPEC en la puerta delantera
+    drawCopec(g, w*.245, h*.42, 42);
+    // PERSIA MOTORSPORT en el zócalo delantero
+    g.fillStyle="#fff"; g.font="bold italic 22px sans-serif";
+    g.fillText("PERSIA", w*.235, h*.905);
+    g.font="italic 15px sans-serif"; g.fillStyle="rgba(255,255,255,.85)";
+    g.fillText("MOTORSPORT", w*.325, h*.91);
+    // arelec / rolec atrás abajo
+    g.fillStyle="#fff"; g.font="bold 24px sans-serif";
+    g.fillText("arelec", w*.62, h*.70);
+    g.fillStyle="#9ADCF5"; g.fillText("rolec", w*.635, h*.795);
+    // Lemaitre manuscrito
+    g.fillStyle="#F2C14E"; g.font="italic 24px cursive";
+    g.fillText("Lemaitre", w*.86, h*.62);
+    // Mobil chico adelante
+    drawMobil(g, w*.03, h*.55, 26);
+    g.restore();
+  });
+}
+const sideTexR=paintSide(true);   // cara +z (u=0 es la cola) usa espejada
+const sideTexL=paintSide(false);  // cara -z (u=0 es el frente) usa normal
+
+/* --- ventanas laterales: pilotos con banderas y 88 en la ventana trasera --- */
+function paintWin(mirror){
+  return liveryCanvas(512,128,(g,w,h)=>{
+    g.save();
+    if(mirror){g.translate(w,0);g.scale(-1,1);}
+    g.fillStyle="#0C1524"; g.fillRect(0,0,w,h);
+    // pilar B
+    g.fillStyle="#060B14"; g.fillRect(w*.47,0,w*.05,h);
+    // pilotos con banderitas (ventana delantera)
+    drawFlagCL(g, w*.06, h*.16, 34);
+    g.fillStyle="#fff"; g.font="bold 26px sans-serif"; g.textAlign="left"; g.textBaseline="middle";
+    g.fillText("D. González", w*.15, h*.26);
+    drawFlagCL(g, w*.06, h*.56, 34);
+    g.fillStyle="#FFD23F"; g.fillText("T. Cañete", w*.15, h*.66);
+    // 88 en la ventana trasera
+    num88(g, w*.74, h*.5, 66);
+    // brillo del vidrio
+    const gl=g.createLinearGradient(0,0,w,h);
+    gl.addColorStop(0,"rgba(255,255,255,.10)"); gl.addColorStop(.5,"rgba(255,255,255,0)");
+    g.fillStyle=gl; g.fillRect(0,0,w,h);
+    g.restore();
+  });
+}
+const winTexR=paintWin(true), winTexL=paintWin(false);
+
+/* --- capot: azul oscuro con panel blanco PERSIA y franjas --- */
+const hoodTex=liveryCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#152238"; g.fillRect(0,0,w,h);
+  // panel blanco inclinado
+  g.save(); g.translate(w*.5,h*.5); g.rotate(-.12);
+  g.fillStyle="#F2EFE6"; g.fillRect(-w*.34,-h*.20,w*.62,h*.40);
+  g.fillStyle="#152238"; g.font="bold italic 30px sans-serif";
+  g.textAlign="center"; g.textBaseline="middle";
+  g.fillText("PERSIA",0,-h*.05);
+  g.font="italic 16px sans-serif";
+  g.fillText("MOTORSPORT",0,h*.09);
+  g.restore();
+  // franjas
+  g.strokeStyle="rgba(255,255,255,.85)"; g.lineWidth=8;
+  g.beginPath(); g.moveTo(w*.12,0); g.lineTo(w*.22,h); g.stroke();
+  g.strokeStyle="#4FC3E8"; g.lineWidth=5;
+  g.beginPath(); g.moveTo(w*.18,0); g.lineTo(w*.28,h); g.stroke();
+});
+
+/* --- techo: celeste con Auto360 y toma de aire --- */
+const roofTex=liveryCanvas(256,256,(g,w,h)=>{
+  g.fillStyle="#4FC3E8"; g.fillRect(0,0,w,h);
+  g.fillStyle="#16233F"; g.font="bold italic 66px sans-serif";
+  g.textAlign="center"; g.textBaseline="middle";
+  g.save(); g.translate(w*.5,h*.5); g.rotate(-Math.PI/2);
+  g.fillText("Auto360",0,0); g.restore();
+  num88(g, w*.5, h*.85, 44);
+});
+
+/* --- banda Mobil 1 del parabrisas --- */
+const mobilBandTex=liveryCanvas(512,96,(g,w,h)=>{
+  g.fillStyle="#fff"; g.fillRect(0,0,w,h);
+  g.save(); g.translate(w*.30,0);
+  drawMobil(g, 0, h*.14, h*.72);
+  g.restore();
+});
+
+/* --- frente (paragolpes): Auto360.cl, parrilla con VW, patente y gancho --- */
+const frontTex=liveryCanvas(512,160,(g,w,h)=>{
+  g.fillStyle="#4FC3E8"; g.fillRect(0,0,w,h);
+  // Auto360.cl blanco arriba
+  g.fillStyle="#fff"; g.font="bold italic 44px sans-serif";
+  g.textAlign="center"; g.textBaseline="middle";
+  g.fillText("Auto360", w*.46, h*.24);
+  g.fillStyle="#16233F"; g.font="bold 24px sans-serif";
+  g.fillText(".cl", w*.66, h*.18);
+  // parrilla negra con logo VW
+  g.fillStyle="#0B1220"; g.fillRect(w*.30,h*.44,w*.40,h*.26);
+  g.strokeStyle="#C8CED8"; g.lineWidth=3;
+  g.beginPath(); g.arc(w*.5,h*.57,h*.11,0,7); g.stroke();
+  g.fillStyle="#C8CED8"; g.font="bold 16px sans-serif";
+  g.fillText("VW", w*.5, h*.575);
+  // patente verde
+  g.fillStyle="#BFE8A0"; g.fillRect(w*.40,h*.76,w*.20,h*.17);
+  g.strokeStyle="#3B5A2A"; g.lineWidth=2; g.strokeRect(w*.40,h*.76,w*.20,h*.17);
+  g.fillStyle="#1E2E14"; g.font="bold 15px monospace";
+  g.fillText("KR·VY·19", w*.5, h*.85);
+  // gancho de remolque rojo
+  g.fillStyle="#D91E2E";
+  g.beginPath(); g.moveTo(w*.13,h*.80); g.lineTo(w*.19,h*.68); g.lineTo(w*.25,h*.80); g.closePath(); g.fill();
+  // tomas de aire
+  g.fillStyle="#0B1220"; g.fillRect(w*.08,h*.50,w*.12,h*.14); g.fillRect(w*.80,h*.50,w*.12,h*.14);
+});
+
+/* --- cola: azul con Auto360.cl y sponsors --- */
+const rearTex=liveryCanvas(512,160,(g,w,h)=>{
+  g.fillStyle="#141F38"; g.fillRect(0,0,w,h);
+  g.fillStyle="#fff"; g.font="bold italic 40px sans-serif";
+  g.textAlign="center"; g.textBaseline="middle";
+  g.fillText("Auto360.cl", w*.5, h*.28);
+  // firmafast en el paragolpes
+  g.font="bold 22px sans-serif"; g.textAlign="center";
+  g.fillStyle="#fff"; g.fillText("firma", w*.245, h*.58);
+  g.fillStyle="#4FE0C8"; g.fillText("fast", w*.315, h*.58);
+  drawCopec(g, w*.045, h*.44, 24);
+  g.fillStyle="#fff"; g.font="bold 17px sans-serif";
+  g.fillText("arelec · rolec", w*.72, h*.60);
+  num88(g, w*.5, h*.70, 34);
+  // patente
+  g.fillStyle="#BFE8A0"; g.fillRect(w*.42,h*.80,w*.16,h*.15);
+  g.fillStyle="#1E2E14"; g.font="bold 12px monospace";
+  g.fillText("KR·VY·19", w*.5, h*.88);
+});
+
+/* --- llanta plateada de 6 rayos --- */
+const rimTex=liveryCanvas(128,128,(g,w,h)=>{
+  g.fillStyle="#151515"; g.fillRect(0,0,w,h);
+  g.translate(w/2,h/2);
+  g.strokeStyle="#C9CFD8"; g.lineWidth=7;
+  g.beginPath(); g.arc(0,0,46,0,7); g.stroke();
+  g.lineWidth=9; g.lineCap="round";
+  for(let i=0;i<6;i++){
+    const a=i*Math.PI/3;
+    g.beginPath(); g.moveTo(Math.cos(a)*8,Math.sin(a)*8);
+    g.lineTo(Math.cos(a)*42,Math.sin(a)*42); g.stroke();
+  }
+  g.fillStyle="#8F98A6"; g.beginPath(); g.arc(0,0,10,0,7); g.fill();
+});
+
+function buildCar(){
+  const car=new THREE.Group();
+  const matNavy =new THREE.MeshLambertMaterial({color:0x16233F});
+  const matNavyD=new THREE.MeshLambertMaterial({color:0x111B30});
+  const matCyan =new THREE.MeshLambertMaterial({color:0x4FC3E8});
+  const matDark =new THREE.MeshLambertMaterial({color:0x0C1524});
+  const matSideR=new THREE.MeshLambertMaterial({map:sideTexR});
+  const matSideL=new THREE.MeshLambertMaterial({map:sideTexL});
+  const matHood =new THREE.MeshLambertMaterial({map:hoodTex});
+  const matRoof =new THREE.MeshLambertMaterial({map:roofTex});
+  const matFront=new THREE.MeshLambertMaterial({map:frontTex});
+  const matRear =new THREE.MeshLambertMaterial({map:rearTex});
+  const matWinR =new THREE.MeshLambertMaterial({map:winTexR});
+  const matWinL =new THREE.MeshLambertMaterial({map:winTexL});
+
+  // ---- carrocería baja (frente = +X). Materiales: [+x,-x,+y,-y,+z,-z]
+  const body=new THREE.Mesh(new THREE.BoxGeometry(4.15,.92,2.0),
+    [matFront, matRear, matNavy, matNavyD, matSideR, matSideL]);
+  body.position.y=.78;
+  body.castShadow=true;
+  car.add(body);
+
+  // ---- labio delantero celeste (paragolpes bajo)
+  const lip=new THREE.Mesh(new THREE.BoxGeometry(.42,.30,2.02), matCyan);
+  lip.position.set(2.02,.38,0);
+  car.add(lip);
+
+  // ---- capot inclinado con panel PERSIA
+  const hood=new THREE.Mesh(new THREE.BoxGeometry(1.30,.13,1.90),
+    [matNavy,matNavy,matHood,matNavy,matNavy,matNavy]);
+  hood.position.set(1.42,1.28,0); hood.rotation.z=-.10;
+  hood.castShadow=true;
+  car.add(hood);
+
+  // ---- parabrisas + banda Mobil 1
+  const wind=new THREE.Mesh(new THREE.BoxGeometry(.72,.80,1.78), matDark);
+  wind.position.set(.92,1.42,0); wind.rotation.z=.52;
+  car.add(wind);
+  const band=new THREE.Mesh(new THREE.BoxGeometry(.07,.30,1.74),
+    [new THREE.MeshLambertMaterial({map:mobilBandTex}),matDark,matDark,matDark,matDark,matDark]);
+  band.position.set(1.16,1.70,0); band.rotation.z=.52;
+  car.add(band);
+
+  // ---- cabina hatchback (techo celeste Auto360, ventanas con pilotos y 88)
+  const cab=new THREE.Mesh(new THREE.BoxGeometry(1.95,.72,1.80),
+    [matDark, matNavy, matRoof, matNavy, matWinR, matWinL]);
+  cab.position.set(-.30,1.66,0);
+  cab.castShadow=true;
+  car.add(cab);
+
+  // ---- portón trasero inclinado (silueta hatchback) con luneta
+  const hatch=new THREE.Mesh(new THREE.BoxGeometry(.80,.82,1.82),
+    [matNavy, matNavy, matDark, matNavy, matNavyD, matNavyD]);
+  hatch.position.set(-1.52,1.30,0); hatch.rotation.z=-.62;
+  hatch.castShadow=true;
+  car.add(hatch);
+
+  // ---- alerón de techo
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(.44,.08,1.92), matNavy);
+  wing.position.set(-1.22,2.06,0); wing.rotation.z=-.14;
+  car.add(wing);
+
+  // ---- toma de aire del techo
+  const vent=new THREE.Mesh(new THREE.BoxGeometry(.42,.07,.5), matDark);
+  vent.position.set(.28,2.05,0);
+  car.add(vent);
+
+  // ---- espejos
+  for(const s of [-1,1]){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(.14,.12,.28), matNavy);
+    m.position.set(.62,1.48,s*1.06);
+    car.add(m);
+  }
+
+  // ---- barreros negros detrás de cada rueda
+  const mudM=new THREE.MeshLambertMaterial({color:0x0A0F1A});
+  for(const [mx,mz] of [[.90,1.0],[.90,-1.0],[-1.98,1.0],[-1.98,-1.0]]){
+    const f=new THREE.Mesh(new THREE.BoxGeometry(.10,.42,.40), mudM);
+    f.position.set(mx,.34,mz);
+    car.add(f);
+  }
+
+  // ---- faros y luces
+  const lightM=new THREE.MeshBasicMaterial({color:0xFFF7C9});
+  for(const s of [-0.66,0.66]){
+    const f=new THREE.Mesh(new THREE.BoxGeometry(.10,.20,.44), lightM);
+    f.position.set(2.10,.98,s);
+    car.add(f);
+  }
+  const tailM=new THREE.MeshBasicMaterial({color:0xD91E2E});
+  for(const s of [-0.76,0.76]){
+    const f=new THREE.Mesh(new THREE.BoxGeometry(.08,.22,.38), tailM);
+    f.position.set(-2.09,1.02,s);
+    car.add(f);
+  }
+
+  // ---- ruedas con llanta plateada de rayos
+  const tireSide=new THREE.MeshLambertMaterial({color:0x141414});
+  const capMat=new THREE.MeshLambertMaterial({map:rimTex});
+  const wheelG=new THREE.CylinderGeometry(.45,.45,.34,16);
+  const wheels=[];
+  for(const [wx,wz] of [[1.42,1.02],[1.42,-1.02],[-1.42,1.02],[-1.42,-1.02]]){
+    const w=new THREE.Group();
+    const tire=new THREE.Mesh(wheelG,[tireSide,capMat,capMat]);
+    tire.rotation.x=Math.PI/2;
+    w.add(tire);
+    w.position.set(wx,.45,wz);
+    w.castShadow=true;
+    car.add(w);
+    wheels.push(w);
+  }
+
+  // ---- sombra falsa
+  const shC=document.createElement("canvas"); shC.width=shC.height=128;
+  const sg=shC.getContext("2d");
+  const rad=sg.createRadialGradient(64,64,10,64,64,60);
+  rad.addColorStop(0,"rgba(0,0,0,.4)"); rad.addColorStop(1,"rgba(0,0,0,0)");
+  sg.fillStyle=rad; sg.fillRect(0,0,128,128);
+  const blob=new THREE.Mesh(new THREE.PlaneGeometry(5.2,3),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(shC), transparent:true, depthWrite:false}));
+  blob.rotation.x=-Math.PI/2;
+  blob.position.y=.03;
+  car.add(blob);
+
+  return {group:car, wheels};
+}
+const {group:carMesh, wheels} = buildCar();
+scene.add(carMesh);
+
+
+/* --- anillo del próximo checkpoint --- */
+const ring=new THREE.Mesh(new THREE.TorusGeometry(ROAD_W*.45,.25,10,40),
+  new THREE.MeshBasicMaterial({color:0xFFD23F}));
+ring.rotation.x=Math.PI/2;
+scene.add(ring);
+
+/* --- polvo (pool de sprites) --- */
+const dustTexC=document.createElement("canvas"); dustTexC.width=dustTexC.height=64;
+{
+  const g=dustTexC.getContext("2d");
+  const r=g.createRadialGradient(32,32,4,32,32,30);
+  r.addColorStop(0,"rgba(190,160,120,.85)"); r.addColorStop(1,"rgba(190,160,120,0)");
+  g.fillStyle=r; g.fillRect(0,0,64,64);
+}
+const dustTex=new THREE.CanvasTexture(dustTexC);
+const DUST_N=120, dustPool=[];
+for(let i=0;i<DUST_N;i++){
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:dustTex, transparent:true, depthWrite:false, opacity:0}));
+  s.visible=false;
+  scene.add(s);
+  dustPool.push({s, vx:0,vy:0,vz:0, t:0, life:0});
+}
+let dustCursor=0;
+function spawnDust(x,z,n){
+  for(let i=0;i<n;i++){
+    const d=dustPool[dustCursor]; dustCursor=(dustCursor+1)%DUST_N;
+    d.s.visible=true;
+    d.s.position.set(x+(Math.random()-.5)*1.4, .3, z+(Math.random()-.5)*1.4);
+    d.vx=(Math.random()-.5)*2.5; d.vy=1.2+Math.random()*1.6; d.vz=(Math.random()-.5)*2.5;
+    d.t=0; d.life=.7+Math.random()*.6;
+    const sc=.8+Math.random()*.8;
+    d.s.scale.set(sc,sc,1);
+  }
+}
+
+/* ============ Física (misma que 2D, en plano XZ) ============ */
+const car={x:0,z:0,ang:0,vx:0,vz:0};
+const KMH=6.5;                       // factor unidades → km/h (solo para el velocímetro)
+const ACCEL=34, BRAKE=52, MAX_REV=-3;
+const DRAG=.62, GRIP_ROAD=7.5, GRIP_HAND=1.6, GRIP_GRASS=3.2;
+const GRASS_DRAG=2.1, STEER=2.6;
+let nextCp=1, lap=1, lapStart=0, lastLap=null, bestLap=null, running=false;
+let camMode=0; // 0 persecución, 1 lejana, 2 capot
+
+function resetCar(){
+  const a=PATH[0], b=PATH[2];
+  car.x=a[0]; car.z=a[1];
+  car.ang=Math.atan2(b[1]-a[1], b[0]-a[0]);
+  car.vx=0; car.vz=0;
+  nextCp=1; lapStart=performance.now(); running=true;
+  snapCamera();
+}
+
+/* ============ Entrada ============ */
+const keys={};
+addEventListener("keydown",e=>{
+  keys[e.code]=true;
+  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+  if(e.code==="KeyR") resetCar();
+  if(e.code==="KeyC") camMode=(camMode+1)%3;
+});
+addEventListener("keyup",e=>keys[e.code]=false);
+function bindTouch(id,code){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault(); keys[code]=true;};
+  const off=e=>{e.preventDefault(); keys[code]=false;};
+  el.addEventListener("touchstart",on); el.addEventListener("touchend",off);
+  el.addEventListener("touchcancel",off);
+  el.addEventListener("mousedown",on); el.addEventListener("mouseup",off);
+}
+bindTouch("btnGas","ArrowUp"); bindTouch("btnBrake","ArrowDown");
+bindTouch("btnLeft","ArrowLeft"); bindTouch("btnRight","ArrowRight");
+bindTouch("btnHand","Space");
+
+/* ============ HUD ============ */
+const $=id=>document.getElementById(id);
+function fmt(ms){
+  if(ms==null) return "--:--.---";
+  const m=Math.floor(ms/60000), s=Math.floor(ms%60000/1000), r=Math.floor(ms%1000);
+  return m+":"+String(s).padStart(2,"0")+"."+String(r).padStart(3,"0");
+}
+let msgTimer=0;
+function showMsg(t){ $("msg").textContent=t; $("msg").style.opacity=1; msgTimer=2.2; }
+
+/* ============ Cámara ============ */
+const camPos=new THREE.Vector3(), camTgt=new THREE.Vector3();
+function desiredCam(){
+  const fx=Math.cos(car.ang), fz=Math.sin(car.ang);
+  if(camMode===2){ // capot
+    return {
+      pos:new THREE.Vector3(car.x+fx*1.2, 1.7, car.z+fz*1.2),
+      tgt:new THREE.Vector3(car.x+fx*14, 1.2, car.z+fz*14)
+    };
+  }
+  const back = camMode===1 ? 16 : 9.5;
+  const up   = camMode===1 ? 8.5 : 4.4;
+  return {
+    pos:new THREE.Vector3(car.x-fx*back, up, car.z-fz*back),
+    tgt:new THREE.Vector3(car.x+fx*4, 1, car.z+fz*4)
+  };
+}
+function snapCamera(){
+  const d=desiredCam();
+  camPos.copy(d.pos); camTgt.copy(d.tgt);
+}
+
+/* ============ Loop ============ */
+let prev=performance.now(), wheelSpin=0;
+function frame(now){
+  const dt=Math.min((now-prev)/1000,.033); prev=now;
+  if(running) step(dt);
+  render(dt);
+  requestAnimationFrame(frame);
+}
+
+function step(dt){
+  const fx=Math.cos(car.ang), fz=Math.sin(car.ang);
+  let vF = car.vx*fx + car.vz*fz;
+  let vL = -car.vx*fz + car.vz*fx;
+
+  const near=nearestSeg(car.x,car.z);
+  const onRoad = near.dist < ROAD_W/2+1;
+
+  const gas   = keys["ArrowUp"]||keys["KeyW"];
+  const brake = keys["ArrowDown"]||keys["KeyS"];
+  const left  = keys["ArrowLeft"]||keys["KeyA"];
+  const right = keys["ArrowRight"]||keys["KeyD"];
+  const hand  = keys["Space"];
+
+  if(gas)   vF += ACCEL*dt*(onRoad?1:.55);
+  if(brake) vF -= (vF>0?BRAKE:ACCEL*.6)*dt;
+  vF=Math.max(MAX_REV,vF);   // sin tope físico: el velocímetro es el que se clava en 150
+
+  const steerIn=(right?1:0)-(left?1:0);
+  const speedFac=Math.min(Math.abs(vF)/12,1)*(vF<0?-1:1);
+  car.ang += steerIn*STEER*speedFac*dt;
+
+  let grip=onRoad?GRIP_ROAD:GRIP_GRASS;
+  if(hand) grip=GRIP_HAND;
+  vL -= vL*Math.min(grip*dt,1);
+  vF -= vF*DRAG*dt;
+  if(!onRoad) vF -= vF*GRASS_DRAG*dt;
+
+  const nfx=Math.cos(car.ang), nfz=Math.sin(car.ang);
+  car.vx=nfx*vF-nfz*vL;
+  car.vz=nfz*vF+nfx*vL;
+  car.x+=car.vx*dt;
+  car.z+=car.vz*dt;
+
+  car.x=Math.max(-60,Math.min(320,car.x));
+  car.z=Math.max(-60,Math.min(300,car.z));
+
+  // polvo
+  const speed=Math.hypot(car.vx,car.vz);
+  const drifting=Math.abs(vL)>4;
+  if(speed>4){
+    const bx=car.x-nfx*1.8, bz=car.z-nfz*1.8;
+    if(!onRoad||drifting||hand) spawnDust(bx,bz,2);
+    else if(Math.random()<.35) spawnDust(bx,bz,1);
+  }
+  for(const d of dustPool){
+    if(!d.s.visible) continue;
+    d.t+=dt;
+    if(d.t>d.life){d.s.visible=false; continue;}
+    d.s.position.x+=d.vx*dt;
+    d.s.position.y+=d.vy*dt;
+    d.s.position.z+=d.vz*dt;
+    const k=d.t/d.life;
+    d.s.material.opacity=(1-k)*.55;
+    const sc=d.s.scale.x+2.2*dt;
+    d.s.scale.set(sc,sc,1);
+  }
+
+  // visual del auto
+  carMesh.position.set(car.x,0,car.z);
+  carMesh.rotation.y=-car.ang;
+  carMesh.rotation.z=THREE.MathUtils.lerp(carMesh.rotation.z, -steerIn*speedFac*.06, .15); // rolido
+  wheelSpin+=vF*dt*2.2;
+  for(let i=0;i<4;i++){
+    wheels[i].rotation.z=-wheelSpin;
+    if(i<2) wheels[i].rotation.y=steerIn*.42; // dirección en ruedas delanteras
+  }
+
+  // checkpoints
+  const cp=PATH[CHECKPOINTS[nextCp%CHECKPOINTS.length]];
+  ring.position.set(cp[0],.15,cp[1]);
+  const pl=1+Math.sin(performance.now()/180)*.08;
+  ring.scale.set(pl,pl,1);
+  if(Math.hypot(car.x-cp[0],car.z-cp[1])<ROAD_W*.75){
+    if(nextCp%CHECKPOINTS.length===0){
+      const t=performance.now()-lapStart;
+      lastLap=t;
+      if(bestLap==null||t<bestLap){bestLap=t; showMsg("¡RÉCORD! "+fmt(t));}
+      else showMsg("Vuelta "+fmt(t));
+      lap++; lapStart=performance.now();
+    }
+    nextCp++;
+  }
+
+  // luz sigue al auto (para sombras)
+  sun.position.set(car.x+60,90,car.z+40);
+  sun.target.position.set(car.x,0,car.z);
+
+  // HUD
+  $("tCur").textContent=fmt(performance.now()-lapStart);
+  $("tLast").textContent=fmt(lastLap);
+  $("tBest").textContent=fmt(bestLap);
+  $("lap").textContent=lap;
+  const kmh=Math.max(0,Math.min(150,Math.round(speed*KMH)));
+  $("kmh").textContent=kmh;
+  $("gearfill").style.width=Math.min(kmh/150*100,100)+"%";
+  if(msgTimer>0){msgTimer-=dt; if(msgTimer<=0) $("msg").style.opacity=0;}
+}
+
+function render(dt){
+  const d=desiredCam();
+  const k=camMode===2?1:Math.min(dt*4.5,1);
+  camPos.lerp(d.pos,k);
+  camTgt.lerp(d.tgt,k);
+  camera.position.copy(camPos);
+  camera.lookAt(camTgt);
+  renderer.render(scene,camera);
+}
+
+document.getElementById("startBtn").addEventListener("click",()=>{
+  document.getElementById("overlay").style.display="none";
+  resetCar();
+  showMsg("¡A FONDO!");
+});
+
+snapCamera();
+resetCar(); running=false; // deja el auto posado en la grilla detrás del overlay
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
